@@ -1,0 +1,115 @@
+---
+title: "Machine Learning Project"
+author: "Nick Lukianoff"
+date: "December 26, 2015"
+output: html_document
+---
+
+        This project involves reading in a large data set, reducing it to an appropriate size, validate it, perform machine learning on it, and test the results.
+
+•	How I built my model
+
+        I chose a boosted tree model using gbm.  This model provides excellent predictions with a minimum of processing.  It does this by invoking efficient algorithms.
+        
+        To begin with, I wanted to reduce the data set.  This would speed up processing and reduce file sizes.  The initial data set contained 3,139,520 items in 19,622 rows and 160 columns.  I first removed any columns that contained NA values.  This removed 67 columns, leaving me with 1,824,846 data items.  This is a 41.88% reduction !
+        I next removed any non-numeric columns.  These were columns 1-7, which contained identifier information that wasn't needed to data analysis.  Removing these columns yielded a 7.53% reduction.
+        Next, I removed any columns that had very little variance.  The fact that the values in these columns were so similar meant that they acted more as constants then as variables.  33 columns were thus removed, yielding a 38.37% data set reduction.
+        Last, I removed any rows that contained outliers.  Outliers give data a large variance, and typically don't significantly impact the final result.  I checked the standard deviation of each column, and removed any row that contained a value of greater than 2 standard deviations from the mean.  This reduced my data set by 7.2%.
+        The end result of the data cleaning was a data set consisting of 18,210 rows and 53 colums.  This means that I now have 965,130 data points, an incredible 69.26% reduction from the original data set !
+
+```{r}
+library(caret)
+library(stats)
+library(gbm)
+
+set.seed(1234)
+
+training <- read.csv("pml-training.csv")
+dim(training)
+
+#remove columns that have NA values, since these may not be as applicable
+training.nona <- training[,colSums(is.na(training)) == 0]
+
+#remove columns that don't have data that we'll be correlating, namely columns 1:7
+cc <- ncol(training.nona)
+training.noid <- training.nona[,8:cc]
+
+#remove columns that have little variance, since they're almost a constant
+nzv <- nearZeroVar(training.noid)
+training.nzv <- training.noid[,-nzv]
+
+#remove rows that contain outliers, defined as being more than 2 standard deviations from the mean
+cc <- ncol(training.nzv)
+for(i in 1:(cc-1)) {
+        training.norow <- training.nzv[!(abs(training.nzv[,i] - mean(training.nzv[,i]))/sd(training.nzv[,i])) > 2,]
+}
+
+dim(training.norow)
+```
+
+•	How I used cross validation
+
+        Initially I wanted to use 10 k-folds of data, with 10 repititions of each.  This would provide a robust validation set.  However, this overloaded my computer, maxing out the memory, and using up all available disk space, causing the program to crash.  I decided to use a more realistic 5 k-fold model, with 5 repititions.  I also split the data 70-30 into training and testing sets.
+
+```{r}
+#Split the data into training and validation sets
+train1 <- createDataPartition(y=training.norow$classe, p=0.7, list=FALSE)
+training.set <- training.norow[train1,]
+training.test <- training.norow[-train1,]
+
+fitControl <- trainControl( 
+        method = "repeatedcv",
+        number = 5,
+        repeats = 5)
+```
+
+        The results of this cross-validation were passed to the bgm training call.
+        
+```{r}
+gbmFit1 <- train(training.set$classe ~ ., data = training.set,
+                 method = "gbm",
+                 trControl = fitControl,
+                 verbose = FALSE)
+```
+
+•	What I think the expected out of sample error is
+
+        The expected sample error is 3.48%.  This number was obtained by comparing the predicted value in the test training set to the actual value in the test training set.  Out of 5,460 values in the training test set, 5,270 were accurate.  I was hoping for an error rate of less than 5%, and this was achieved.
+        
+```{r}
+predicted.values <- predict(gbmFit1, training.test)
+testme <- data.frame(predicted.values,training.test$classe)
+testme$delta <- ifelse(testme[,1] == testme[,2], 1, 0)
+error.num <- (nrow(testme)-sum(testme$delta))/nrow(testme)*100
+print(paste("Error rate:", format(error.num,digits=2,nsmall=2), "%"))
+```        
+
+•	Why I made the choices that I did.
+
+        I wanted to use an accurate prediction method that didn't involve randome forest.  I suspect that most people would choose randome forest, and so I wanted to try a different method.  I have a weak computer, so I wanted an algorithm that wasn't too processor-intensive.  This means that a boosted algorithm was my best bet.  It produces accurate results with minimal processing.  I chose an efficient model, the boosted tree model. The final values used for the model were n.trees = 150, interaction.depth = 3, shrinkage = 0.1 and n.minobsinnode = 10. 
+
+•	Results
+
+        This plot shows the results of training and cross-validation.  It shows that the best results are obtained with a tree depth of 3, and using 150 iterations.
+
+```{r, echo=FALSE}
+plot(gbmFit1)
+```
+
+        A table of training results shows this in tabular format.  The very last line shows the highest accuracy rate of 96.34%, and the lowest standard deviation of 0.2%.  This is the line that uses 150 iterations of a 3-deep tree.  It is the value that is used to generate the preditions.
+
+```{r}
+gbmFit1$results
+```
+
+```{r}
+gbmFit1$bestTune
+```
+
+•	Observations
+
+        I created a table of observations and their relative weights.  I found out that the roll_belt variable accounted for a full 24% of the total prediction of the score !  This is by far the most significant variable.  The top 4 variables accounted for 50% of the scoring weights, and the top 10 variables accounted for 75%.  The top 20 accounted for 90%.  The bottom 8 didn't contribute anything, and in hindsight, could have been removed as part of the data cleaning process.  The bottom 25 variables each contributed less than 1% to the solution.  This means that half of all the values contributed only 10%.  The following graph and table illustrate this.
+        
+```{r}
+summary(gbmFit1)
+```
